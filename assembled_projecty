@@ -1,0 +1,139 @@
+#include <avr/sleep.h>
+#include <EEPROM.h>
+#include <LedControl.h>
+
+#define interruptpin 2
+#define count_reset_pin  7
+#define sleep_led_denoting_pin LED_BUILTIN
+#define count_interrupt_pin 3
+
+LedControl lc = LedControl(11, 13, 10, 1);
+
+//Global variables used in this program
+int count_interrupt_mode = FALLING;
+
+volatile bool sleep_interrupt = false;
+volatile bool reset_interrupt = false;
+volatile bool count_interrupt = false;
+
+int second_equivalent = 49910;
+int timer = 0;
+int counter = 0;
+const int sleep_time = 20;
+int count_address = 0;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(sleep_led_denoting_pin, OUTPUT);
+  pinMode(interruptpin, INPUT_PULLUP);
+  pinMode(count_interrupt_pin, INPUT_PULLUP);
+  pinMode(count_reset_pin, INPUT_PULLUP);
+
+  digitalWrite(sleep_led_denoting_pin, HIGH);
+
+  //  attachInterrupt(digitalPinToInterrupt(count_reset_pin), reset_counter_ISR, LOW);
+  attachInterrupt(digitalPinToInterrupt(count_interrupt_pin), update_counter_ISR, count_interrupt_mode);
+
+  lc.shutdown(0, false);//wake up the MAX72XX from power-saving mode
+  lc.setIntensity(0, 2);//set a medium brightness for the Leds
+  lc.clearDisplay(0);
+
+  sleep_timer_init();
+  sei();
+}
+
+void loop() {
+  reset_interrupt = digitalRead(count_reset_pin) ^ 1;
+
+  //  count_interrupt = digitalRead(count_interrupt_pin)^1;
+  //  Serial.println(digitalRead(count_interrupt_pin));
+
+  if (timer >= sleep_time) {
+    timer = 0;
+    go_to_sleep();
+  }
+  else if (reset_interrupt) {
+    Serial.println("Reseting the counter!");
+    timer = 0;
+    reset_interrupt = false;
+    EEPROM.update(count_address, 0);
+    EEPROM.update(count_address + 1, 0);
+    delay(1000);
+  }
+  else if (count_interrupt) { // count_flag
+    detachInterrupt(digitalPinToInterrupt(count_interrupt_pin));
+    digitalWrite(count_interrupt_pin, HIGH);
+    Serial.println("Increasing the count!");
+    timer = 0;
+    count_interrupt = false;
+    update_count();
+    delay(1000);
+    attachInterrupt(digitalPinToInterrupt(count_interrupt_pin), update_counter_ISR, count_interrupt_mode);
+  }
+}
+
+void reset_counter_ISR() {
+  reset_interrupt = true;
+}
+
+void update_counter_ISR() {
+  count_interrupt = true;
+}
+
+void update_count() {
+  //  Msb first format
+  uint16_t current_count_0 = EEPROM.read(count_address);
+  uint16_t current_count_1 = EEPROM.read(count_address + 1);
+
+  uint16_t read_count = (current_count_0 << 8) + current_count_1 + 1;
+  Serial.println(read_count);
+  EEPROM.update(count_address + 1, read_count & 0x00ff);
+  EEPROM.update(count_address, (read_count >> 8));
+
+  //******************display_the_data***************//
+  String t = String(read_count);
+  lc.setDigit(0, 0, (int)(t[0] - '0'), false);   //unit position
+  lc.setDigit(0, 1, (int)(t[1] - '0'), false);  //tens position
+  lc.setDigit(0, 2, (int)(t[2] - '0'), false);  //hundred position
+  lc.setDigit(0, 3, (int)(t[3] - '0'), false);  //thousand position
+  lc.setIntensity(0, 2);
+  lc.shutdown(0, false);
+}
+
+void sleep_timer_init() {
+  TCCR1A = 0;
+  TCCR1B = 0;
+
+  TCNT1 = second_equivalent;                        // preload timer
+  TCCR1B |= (1 << CS10) | (1 << CS12);  // 1024 prescaler
+  TIMSK1 |= (1 << TOIE1);               // enable timer overflow interrupt ISR
+}
+
+ISR(TIMER1_OVF_vect)                    // interrupt service routine for overflow
+{
+  TCNT1 = second_equivalent;                               // preload timer
+  timer++;
+}
+
+void go_to_sleep() {
+  sleep_enable();
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  Serial.println("Sleeping!");
+  Serial.print("Shutting down the lcd");
+
+  digitalWrite(sleep_led_denoting_pin, LOW);
+  lc.setIntensity(0, 1);//set a medium brightness for the Leds
+  //lc.shutdown(0, true);
+
+  attachInterrupt(digitalPinToInterrupt(interruptpin), wakeup, LOW);
+  delay(500);
+  sleep_cpu();
+  Serial.println("just woke up!");
+  digitalWrite(sleep_led_denoting_pin, HIGH);
+}
+
+void wakeup() {
+  sleep_disable();
+  detachInterrupt(digitalPinToInterrupt(interruptpin));
+}
