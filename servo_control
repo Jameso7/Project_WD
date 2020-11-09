@@ -1,0 +1,61 @@
+#include<Servo.h>
+
+#define battery_voltage_pin A0
+#define locking_servo_pin 5
+#define voltage_limit 275
+
+
+const int numReadings = 20;
+int battery_voltage;
+
+Servo myservo;
+
+int readings[numReadings];
+int readIndex = 0;
+int total = 0;
+int average = 0;
+
+int inputPin = A0;
+
+void setup() {
+
+  myservo.attach(locking_servo_pin);
+  pinMode(battery_voltage_pin, INPUT);
+
+  for (int thisReading = 0;
+       thisReading < numReadings;
+       thisReading++) {
+    readings[thisReading] = 0;
+  }
+  Serial.begin(9600);
+}
+
+void loop() {
+  voltage();
+}
+
+void voltage() {
+
+  total = total - readings[readIndex];
+  readings[readIndex] = analogRead(inputPin);
+  total = total + readings[readIndex];
+  readIndex = readIndex + 1;
+
+  if (readIndex >= numReadings) {
+    readIndex = 0;
+  }
+  average = total / numReadings;
+  Serial.println(average);
+  delay(100);
+
+  if (average < 275) {
+    Serial.println("Battery LOW");
+    myservo.write(60);
+    delay(100);
+  }
+  else {
+    Serial.println("Battery Good condition");
+    myservo.write(95); //70
+    delay(100);
+  }
+}
